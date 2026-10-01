@@ -24,6 +24,9 @@ sudo pacman -S --needed qemu-desktop edk2-ovmf mtools libisoburn gptfdisk dosfst
 | `acpica`      | `acpidump`/`iasl`, to dump and decompile this laptop's ACPI tables |
 | `cargo-deny`  | Checks dependency licenses against the [policy](workflow.md#dependency-licenses) |
 
+USB flashing also uses `lsblk` from `util-linux` (part of the base Arch
+install) to inspect the target disk and all its descendants.
+
 Limine binaries come from the installed `limine` package
 (`/usr/share/limine/BOOTX64.EFI`; override with `LIMINE_DIR`). CI
 downloads the same Limine release, pinned by version and SHA-256 in
@@ -105,8 +108,8 @@ optimized kernel for `build`, `image`, `run`, and `test`.
 | `cargo xtask logs`            | Copies boot logs and crash reports from the USB stick and prints the latest | Planned |
 | `cargo xtask firmware`        | Fills the firmware cache from `/usr/lib/firmware` using `firmware/manifest.toml` ([ADR-0022](../decisions/0022-firmware-blobs.md)) | Planned |
 | `cargo xtask test`            | Boots headless (KVM if available, else TCG) three times and checks the kernel log and the **text on screen**, read back from QEMU screenshots with the kernel's own font: a normal boot (last console line must read `horus: boot complete`), a scroll test (`console-test` kernel feature: 100 numbered lines, every visible row checked), and a forced panic (`panic-test`: every panic screen line checked against the debug log). Screenshots land in `target/test-*.ppm`. Kernel unit tests come in v0.2 | ✓ |
-| `cargo xtask flash /dev/sdX`  | Writes the image to a USB stick, after the safety checks below | Planned |
-| `cargo xtask ci`              | Everything CI runs: fmt, clippy (kernel and xtask, `-D warnings`), `cargo deny`, boot test | ✓ |
+| `cargo xtask flash /dev/sdX`  | Writes the existing `target/horus.img` to a USB stick, after the safety checks below | ✓ |
+| `cargo xtask ci`              | Everything CI runs: fmt, clippy (kernel and xtask, `-D warnings`), xtask host unit tests, `cargo deny`, boot test | ✓ |
 
 ### QEMU baseline
 
@@ -141,13 +144,31 @@ must also be tested on the laptop.
 
 ### `flash` safety checks
 
-`cargo xtask flash` must:
+`cargo xtask flash /dev/sdX`:
 
-1. Refuse any path that isn't a whole block device (`/dev/sdX`).
-2. Refuse NVMe devices (`/dev/nvme*`) and any device with a mounted partition.
-3. Refuse devices whose transport isn't `usb` (`lsblk -o TRAN`).
-4. Show model, size, and current partitions, and require typing the
-   device name to confirm.
+1. Resolves aliases and refuses any target that isn't a whole block
+   device (`/dev/sdX`, confirmed as `TYPE=disk` by `lsblk`).
+2. Refuses NVMe paths (`/dev/nvme*`, including resolved aliases), any
+   mounted disk or descendant, swap, and active device holders.
+3. Refuses devices whose transport isn't exactly `usb` (`lsblk TRAN`);
+   failed or malformed `lsblk` output also stops the command.
+4. Checks that the existing image is nonempty, sector aligned, and fits
+   the device. The current GPT image requires 512-byte logical sectors.
+5. Shows model, size in bytes, and current partitions, then requires
+   typing the full resolved device name (for example `/dev/sdb`). A
+   mismatch or EOF cancels before any write.
+6. Opens the disk exclusively, checks its identity, and repeats the
+   device checks after confirmation. Changed details cancel the write.
+7. Copies the image without truncating the disk and flushes it before
+   reporting success. All existing data on the target is disposable;
+   an interrupted or failed write requires flashing it again.
+
+Build the image first with `cargo xtask image`. `flash` accepts exactly
+one device argument and no options or confirmation bypass. It requires
+Linux and write permission on the USB disk. If elevated permission is
+needed, run the already-built host tool with
+`sudo target/debug/xtask flash /dev/sdX` from the repository root;
+this runs the same checks and prompt without building as root.
 
 ## Booting on the laptop
 

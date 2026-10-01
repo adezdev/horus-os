@@ -4,6 +4,8 @@
 //!
 //! See `docs/development/setup.md` for the full command list.
 
+#[cfg(target_os = "linux")]
+mod flash;
 mod font;
 mod image;
 mod qemu;
@@ -22,6 +24,7 @@ commands:
   image    build target/horus.img (GPT + FAT32 ESP + Limine + kernel)
   run      boot the image in QEMU
   test     boot headless in QEMU; check the kernel log and the screen
+  flash /dev/sdX  write target/horus.img to a confirmed USB disk
   ci       fmt, clippy, license check, and test
 
 options:
@@ -36,6 +39,7 @@ environment:
   OVMF_VARS   UEFI variable store template (searched in common locations)";
 
 /// Error type for all tasks: a message for the user.
+#[derive(Debug)]
 pub struct Error(String);
 
 impl fmt::Display for Error {
@@ -74,6 +78,12 @@ pub struct Options {
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let command = args.next();
+    if command.as_deref() == Some("flash") {
+        #[cfg(target_os = "linux")]
+        return finish(flash::run(&args.collect::<Vec<_>>()));
+        #[cfg(not(target_os = "linux"))]
+        return finish(Err(Error("flash is supported only on Linux".into())));
+    }
     let mut options = Options::default();
     for arg in args {
         match arg.as_str() {
@@ -98,6 +108,10 @@ fn main() -> ExitCode {
         Some(other) => return usage_error(&format!("unknown command `{other}`")),
         None => return usage_error("missing command"),
     };
+    finish(result)
+}
+
+fn finish(result: Result) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -170,7 +184,16 @@ pub fn build_kernel(options: &Options) -> Result<PathBuf> {
 /// Everything CI checks. Run before every commit.
 fn ci() -> Result {
     run_command(cargo().args(["fmt", "--all", "--check"]))?;
-    run_command(cargo().args(["clippy", "--package", "xtask", "--", "-D", "warnings"]))?;
+    run_command(cargo().args([
+        "clippy",
+        "--package",
+        "xtask",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+    ]))?;
+    run_command(cargo().args(["test", "--package", "xtask"]))?;
     run_command(cargo().args([
         "clippy",
         "--package",
