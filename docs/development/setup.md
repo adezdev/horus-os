@@ -160,9 +160,9 @@ must also be tested on the laptop.
    Before prompting, prepares and verifies a private sparse copy of
    the image for the disk's full size. `sgdisk` relocates the backup GPT
    in that regular file; it never receives a real block device path.
-   Staging uses a new directory with mode `0700` under `/tmp`, owned by
-   the process user, so an unprivileged process cannot replace a root
-   invocation's staging path through the writable repository directory.
+   Staging uses Linux `O_TMPFILE` with mode `0600` under `/tmp` and gives
+   `sgdisk` a `/proc/<pid>/fd/<fd>` reference to the held file. There is
+   no writable directory entry for another process to replace.
 6. Shows model, size in bytes, and current partitions, then requires
    typing the full resolved device name (for example `/dev/sdb`). A
    mismatch or EOF cancels before any write.
@@ -173,9 +173,15 @@ must also be tested on the laptop.
    reporting success. All existing data on the target is disposable;
    an interrupted or failed write requires flashing it again.
 
-The temporary sparse image is removed when the command returns. Only
-the image and backup GPT regions are written; the unused middle of a
-larger disk is not erased. Flashing is not a secure wipe.
+Staging requires up to the image's size in free `/tmp` space (currently
+514 MiB); an allocation failure stops the command before confirmation
+or disk writes and reports this requirement. The filesystem containing
+`/tmp` must support `O_TMPFILE` (Linux tmpfs and ext4 support it).
+The kernel releases the anonymous file when its last descriptor closes,
+including if the process is killed. It leaves no scratch directory or
+name that can collide with a later run. Only the image and backup GPT
+regions are written; the unused middle of a larger disk is not erased.
+Flashing is not a secure wipe.
 
 Build the image first with `cargo xtask image`. `flash` accepts exactly
 one device argument and no options or confirmation bypass. It requires

@@ -86,7 +86,11 @@ pub fn run(args: &[String]) -> Result {
     validate_snapshot(&devices, &current, &device, image_size)?;
 
     println!("xtask: writing {image_size} bytes to {}", device.display());
-    prepared.write_to(&mut output)?;
+    prepared.write_to(&mut output).map_err(|err| {
+        Error(format!(
+            "flash failed: {err}; device may contain an incomplete image"
+        ))
+    })?;
     output.sync_all().map_err(|err| {
         Error(format!(
             "failed to flush device: {err}; flash again before booting"
@@ -303,13 +307,10 @@ fn validate_snapshot(
 }
 
 fn copy_image(input: &mut impl Read, output: &mut impl Write, size: u64) -> Result {
-    let copied = io::copy(&mut input.take(size), output).map_err(|err| {
-        Error(format!(
-            "flash copy failed: {err}; device may contain an incomplete image"
-        ))
-    })?;
+    let copied = io::copy(&mut input.take(size), output)
+        .map_err(|err| Error(format!("image copy failed: {err}")))?;
     if copied != size {
-        bail!("image ended early; device may contain an incomplete image");
+        bail!("image ended early; copy is incomplete");
     }
     Ok(())
 }
@@ -611,7 +612,7 @@ mod tests {
         assert_eq!(output, &bytes[..512]);
         rejected(
             copy_image(&mut Cursor::new([1, 2]), &mut Vec::new(), 512),
-            "incomplete image",
+            "copy is incomplete",
         );
         // A full slice writer accepts no bytes and produces WriteZero.
         let mut full: &mut [u8] = &mut [];

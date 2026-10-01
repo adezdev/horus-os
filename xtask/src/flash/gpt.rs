@@ -3,62 +3,49 @@
 //! Relocate GPT in a private regular file, then write through the held disk
 //! handle. External partition tools never receive a real device path.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::copy_image;
 use crate::{Error, Result, bail};
 
 const SECTOR: u64 = 512;
-static NEXT_IMAGE: AtomicU64 = AtomicU64::new(0);
+// Linux O_TMPFILE includes O_DIRECTORY and creates an unnamed regular file.
+const O_TMPFILE: i32 = 0o20200000;
 
 struct TempImage {
-    directory: PathBuf,
     path: PathBuf,
     file: File,
 }
 
 impl TempImage {
     fn new() -> Result<Self> {
-        // /tmp's sticky directory and a new mode-0700 directory prevent an
-        // unprivileged process from replacing an elevated tool's pathname.
-        // Do not use target/ or TMPDIR, which the invoking user can control.
-        let directory = Path::new("/tmp").join(format!(
-            "horus-flash-{}-{}",
-            std::process::id(),
-            NEXT_IMAGE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::DirBuilder::new().mode(0o700).create(&directory)?;
-        let path = directory.join("image.img");
-        let file = match OpenOptions::new()
+        // No directory entry can be replaced or collide with a previous run.
+        // The kernel releases storage when the final handle closes, including
+        // after SIGKILL. Ignore user-controlled TMPDIR during elevated runs.
+        let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .create_new(true)
+            .custom_flags(O_TMPFILE)
             .mode(0o600)
-            .open(&path)
-        {
-            Ok(file) => file,
-            Err(err) => {
-                let _ = fs::remove_dir(&directory);
-                return Err(err.into());
-            }
-        };
-        Ok(Self {
-            directory,
-            path,
-            file,
-        })
-    }
-}
-
-impl Drop for TempImage {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-        let _ = fs::remove_dir(&self.directory);
+            .open("/tmp")
+            .map_err(|err| {
+                Error(format!(
+                    "cannot create anonymous GPT staging file in /tmp: {err}"
+                ))
+            })?;
+        // Refer to the parent's held fd: CLOEXEC closes that fd in sgdisk,
+        // so /proc/self/fd would instead refer to the wrong process.
+        let path = PathBuf::from(format!(
+            "/proc/{}/fd/{}",
+            std::process::id(),
+            file.as_raw_fd()
+        ));
+        Ok(Self { path, file })
     }
 }
 
@@ -80,7 +67,11 @@ impl PreparedImage {
         }
         let mut scratch = TempImage::new()?;
         image.seek(SeekFrom::Start(0))?;
-        copy_image(image, &mut scratch.file, image_size)?;
+        copy_image(image, &mut scratch.file, image_size).map_err(|err| {
+            Error(format!(
+                "cannot stage image in /tmp (needs up to {image_size} bytes of free space): {err}"
+            ))
+        })?;
         // Refuse a damaged or non-GPT source instead of letting sgdisk repair
         // or replace a partition table that the owner did not review.
         verify(&scratch.path)?;
@@ -192,24 +183,23 @@ mod tests {
     const IMAGE_SIZE: u64 = 8 * 1024 * 1024;
 
     #[test]
-    fn staging_directory_and_file_are_private_and_removed() {
-        use std::os::unix::fs::PermissionsExt;
+    fn staging_is_anonymous_and_private() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let image = TempImage::new().unwrap();
-        let directory = image.directory.clone();
-        let path = image.path.clone();
-        assert_eq!(directory.parent(), Some(Path::new("/tmp")));
         assert_eq!(
-            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
-            0o700
+            image.path.parent(),
+            Some(Path::new(&format!("/proc/{}/fd", std::process::id())))
         );
+        assert_eq!(image.file.metadata().unwrap().nlink(), 0);
         assert_eq!(
             image.file.metadata().unwrap().permissions().mode() & 0o777,
             0o600
         );
-        drop(image);
-        assert!(!path.exists());
-        assert!(!directory.exists());
+        assert_eq!(
+            std::fs::metadata(&image.path).unwrap().ino(),
+            image.file.metadata().unwrap().ino()
+        );
     }
 
     fn source() -> TempImage {
@@ -235,7 +225,6 @@ mod tests {
         let mut source = source();
         for disk_size in [IMAGE_SIZE, 32 * 1024 * 1024, 128_043_712_512] {
             let mut prepared = PreparedImage::new(&mut source.file, IMAGE_SIZE, disk_size).unwrap();
-            let staging_path = prepared.scratch.path.clone();
             let mut output = TempImage::new().unwrap();
             output.file.set_len(disk_size).unwrap();
             // Bytes outside the image and backup GPT must not be overwritten.
@@ -269,8 +258,6 @@ mod tests {
                 output.file.read_exact(&mut contents).unwrap();
                 assert_eq!(&contents, b"leave unused space alone");
             }
-            drop(prepared);
-            assert!(!staging_path.exists());
         }
         // The original image still has its backup at its own end and verifies.
         verify(&source.path).unwrap();
