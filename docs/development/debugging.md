@@ -114,9 +114,11 @@ to the stick now, force a crash dump.
 ## 6. Tests, fuzzing, and Linux as an oracle
 
 - **Boot tests** (`cargo xtask test`, today): boot headless, check the
-  kernel log, and take a QEMU screenshot over QMP to check what the
-  screen shows (stage stripe, scrolled console, panic screen). The
-  screenshots stay in `target/test-*.ppm` for a look when a test fails.
+  kernel log, and take QEMU screenshots over QMP. The text on screen is
+  read back cell by cell with the kernel's own font and compared as
+  strings, so garbled or missing text fails the test, not just wrong
+  colors. The screenshots stay in `target/test-*.ppm` for a look when a
+  test fails.
 - **Kernel test harness** (v0.2): `#[test_case]` functions run in QEMU
   and report through `debugcon`; QEMU exits with the result code via
   `isa-debug-exit`.

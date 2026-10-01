@@ -96,7 +96,7 @@ optimized kernel for `build`, `image`, `run`, and `test`.
 | ----------------------------- | ---------------------------------------------------------- | ------ |
 | `cargo xtask build`           | Builds the kernel (userspace later)                        | ✓ |
 | `cargo xtask image`           | Builds `target/horus.img` (GPT + FAT32 ESP + Limine + kernel; initrd later) | ✓ |
-| `cargo xtask run`             | Boots the image in QEMU with KVM, OVMF, 8 CPUs, 4 GiB RAM, the laptop's 1366×768 resolution, debugcon to stdout | ✓ |
+| `cargo xtask run`             | Boots the image in QEMU with KVM, OVMF, 8 CPUs, 4 GiB RAM, 1360×768 (see below), debugcon to stdout | ✓ |
 | `cargo xtask run --gdb`       | Same, paused, with a GDB stub on `:1234`                   | ✓ |
 | `cargo xtask run --no-kvm`    | TCG emulation (slower, more deterministic)                 | ✓ |
 | `cargo xtask run --headless`  | No QEMU window                                             | ✓ |
@@ -104,7 +104,7 @@ optimized kernel for `build`, `image`, `run`, and `test`.
 | `cargo xtask run --vfio BDF`  | Passes a real PCI device into QEMU with VFIO; refuses the NVMe, GPU, and audio groups | Planned |
 | `cargo xtask logs`            | Copies boot logs and crash reports from the USB stick and prints the latest | Planned |
 | `cargo xtask firmware`        | Fills the firmware cache from `/usr/lib/firmware` using `firmware/manifest.toml` ([ADR-0022](../decisions/0022-firmware-blobs.md)) | Planned |
-| `cargo xtask test`            | Boots headless (KVM if available, else TCG) twice and checks the kernel log and a QEMU screenshot each time: a normal boot at 1024×600, where the log must scroll, and a forced panic (`panic-test` kernel feature) that must show the red panic screen. Screenshots land in `target/test-*.ppm`. Kernel unit tests come in v0.2 | ✓ |
+| `cargo xtask test`            | Boots headless (KVM if available, else TCG) three times and checks the kernel log and the **text on screen**, read back from QEMU screenshots with the kernel's own font: a normal boot (last console line must read `horus: boot complete`), a scroll test (`console-test` kernel feature: 100 numbered lines, every visible row checked), and a forced panic (`panic-test`: every panic screen line checked against the debug log). Screenshots land in `target/test-*.ppm`. Kernel unit tests come in v0.2 | ✓ |
 | `cargo xtask flash /dev/sdX`  | Writes the image to a USB stick, after the safety checks below | Planned |
 | `cargo xtask ci`              | Everything CI runs: fmt, clippy (kernel and xtask, `-D warnings`), `cargo deny`, boot test | ✓ |
 
@@ -119,12 +119,16 @@ qemu-system-x86_64 \
   -drive if=pflash,format=raw,file=target/OVMF_VARS.fd \
   -drive if=none,id=stick,format=raw,file=target/horus.img \
   -device qemu-xhci,id=xhci -device usb-storage,bus=xhci.0,drive=stick,bootindex=0 \
-  -vga none -device VGA,xres=1366,yres=768 \
+  -vga none -device VGA,xres=1360,yres=768 \
   -debugcon stdio
 ```
 
 This matches the laptop's boot path: UEFI, xHCI, and the OS on USB
-storage. Devices are added as their drivers arrive: `-device usb-net`
+storage. The display is 1360×768, not the panel's 1366×768: QEMU's
+standard VGA only shows widths that are a multiple of 8. Asked for 1366,
+it displays 1360 while the firmware still reports 1366 to the kernel,
+so every row lands at the wrong offset and text shears diagonally.
+`xtask` refuses such widths. Devices are added as their drivers arrive: `-device usb-net`
 (CDC-ECM, standing in for the Anker adapter) in v0.8, and
 `-device intel-hda -device hda-duplex` in v0.9. Add `-device nvme` with a scratch image to test the NVMe
 driver. QEMU can't emulate the hybrid P/E cores, so scheduler placement
