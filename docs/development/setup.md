@@ -110,13 +110,18 @@ optimized kernel for `build`, `image`, `run`, and `test`.
 
 ### QEMU baseline
 
-`xtask run` does (see `xtask/src/qemu.rs`):
+`xtask run` does the equivalent of the commands below (see
+`xtask/src/qemu.rs`). The UEFI variable store must be a writable copy;
+`xtask` makes one per QEMU (`target/ovmf-vars-<pid>.fd`) and deletes it
+when QEMU exits. To run QEMU by hand:
 
 ```sh
+cargo xtask image    # builds target/horus.img
+cp /usr/share/edk2/x64/OVMF_VARS.4m.fd target/ovmf-vars-manual.fd
 qemu-system-x86_64 \
   -machine q35 -smp 8 -m 4G -no-reboot -enable-kvm -cpu host \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file=target/OVMF_VARS.fd \
+  -drive if=pflash,format=raw,file=target/ovmf-vars-manual.fd \
   -drive if=none,id=stick,format=raw,file=target/horus.img \
   -device qemu-xhci,id=xhci -device usb-storage,bus=xhci.0,drive=stick,bootindex=0 \
   -vga none -device VGA,xres=1360,yres=768 \
