@@ -26,6 +26,14 @@ macro_rules! kprintln {
     };
 }
 
+/// Like [`kprintln!`], but only to the debug console. For the panic path,
+/// which must not depend on the framebuffer console.
+macro_rules! kprintln_debugcon {
+    ($($arg:tt)*) => {
+        $crate::log::print_debugcon(format_args!("{}\n", format_args!($($arg)*)))
+    };
+}
+
 struct DebugCon;
 
 impl Write for DebugCon {
@@ -39,7 +47,12 @@ impl Write for DebugCon {
 
 /// Backend of [`kprint!`]; use the macros instead.
 pub fn print(args: fmt::Arguments) {
+    print_debugcon(args);
+    console::print(args);
+}
+
+/// Backend of [`kprintln_debugcon!`]; use the macro instead.
+pub fn print_debugcon(args: fmt::Arguments) {
     // Writing to the debug console cannot fail.
     let _ = DebugCon.write_fmt(args);
-    console::print(args);
 }
