@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Same Limine as the development laptop; bump both together.
+  LIMINE_VERSION: v12.8.0
+  LIMINE_SHA256: e21b0a9ce1cf83e79eb0f3fa6d6de49a1b6d1288df11e2232e41c9f4916b673d
+
+jobs:
+  ci:
+    name: build, lint, boot test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf mtools gdisk
+
+      - name: Install Limine ${{ env.LIMINE_VERSION }}
+        run: |
+          curl -fsSL -o limine-binary.tar.gz \
+            "https://github.com/limine-bootloader/limine/releases/download/${LIMINE_VERSION}/limine-binary.tar.gz"
+          echo "${LIMINE_SHA256}  limine-binary.tar.gz" | sha256sum --check
+          tar xzf limine-binary.tar.gz -C "$RUNNER_TEMP"
+          echo "LIMINE_DIR=$RUNNER_TEMP/limine-binary" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: cargo xtask ci
+        run: cargo xtask ci
