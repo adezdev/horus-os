@@ -42,6 +42,10 @@ extern "C" fn kmain() -> ! {
 
     arch::cpu::log_cpu_info();
 
+    if cfg!(feature = "panic-test") {
+        panic!("panic test requested by `cargo xtask test`");
+    }
+
     stage::enter(Stage::Ready);
     kprintln!("horus: boot complete");
     arch::halt_forever();
