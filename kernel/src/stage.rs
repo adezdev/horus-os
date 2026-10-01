@@ -2,11 +2,15 @@
 
 //! Boot stage colors.
 //!
-//! The laptop has no serial port, so each boot stage paints the whole screen
-//! a distinct color. If boot hangs on real hardware, the color shows how far
-//! it got. The table is mirrored in `docs/architecture/boot.md`.
+//! The laptop has no serial port, so each boot stage shows a distinct color:
+//! the whole screen until the console starts, then a stripe at the top of
+//! the console. If boot hangs on real hardware, the color shows how far it
+//! got. The table is mirrored in `docs/architecture/boot.md`.
 
-use crate::framebuffer::{self, Rgb};
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use crate::console;
+use crate::framebuffer::{Rgb, Surface};
 
 /// A boot stage, in the order they're reached.
 #[derive(Clone, Copy, Debug)]
@@ -24,7 +28,7 @@ pub enum Stage {
 }
 
 impl Stage {
-    const fn color(self) -> Rgb {
+    pub const fn color(self) -> Rgb {
         match self {
             Stage::Unsupported => Rgb(0x8e44ad), // purple
             Stage::Entry => Rgb(0x1d3557),       // dark blue
@@ -35,7 +39,21 @@ impl Stage {
     }
 }
 
+static CURRENT: AtomicU32 = AtomicU32::new(0);
+
 /// Marks the start of `stage` on screen.
 pub fn enter(stage: Stage) {
-    framebuffer::fill(stage.color());
+    CURRENT.store(stage.color().0, Ordering::Relaxed);
+    redraw();
+}
+
+/// Shows the current stage again, e.g. after the console cleared the screen.
+pub fn redraw() {
+    let color = Rgb(CURRENT.load(Ordering::Relaxed));
+    if console::draw_stripe(color) {
+        return;
+    }
+    if let Some(surface) = Surface::primary() {
+        surface.fill(surface.encode(color));
+    }
 }

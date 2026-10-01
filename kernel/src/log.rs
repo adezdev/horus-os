@@ -2,12 +2,12 @@
 
 //! Kernel logging.
 //!
-//! For now, output goes only to the QEMU debug console (I/O port `0xE9`).
-//! The framebuffer console and the in-memory log ring come later in v0.1.
+//! Output goes to the QEMU debug console (I/O port `0xE9`) and, once it's
+//! active, the framebuffer console. An in-memory log ring comes later.
 
 use core::fmt::{self, Write};
 
-use crate::arch;
+use crate::{arch, console};
 
 /// Writes formatted kernel output to every log sink.
 macro_rules! kprint {
@@ -41,4 +41,5 @@ impl Write for DebugCon {
 pub fn print(args: fmt::Arguments) {
     // Writing to the debug console cannot fail.
     let _ = DebugCon.write_fmt(args);
+    console::print(args);
 }
