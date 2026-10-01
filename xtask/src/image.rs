@@ -77,6 +77,7 @@ pub fn build(options: &Options) -> Result<PathBuf> {
         "::/boot",
         "::/boot/limine",
         "::/boot/horus",
+        "::/boot/horus/licenses",
     ]))?;
     copy_in(&fat, &limine_efi, "::/EFI/BOOT/BOOTX64.EFI")?;
     copy_in(
@@ -85,6 +86,12 @@ pub fn build(options: &Options) -> Result<PathBuf> {
         "::/boot/limine/limine.conf",
     )?;
     copy_in(&fat, &kernel, "::/boot/horus/kernel")?;
+    // Third-party notices for what's compiled into the kernel.
+    copy_in(
+        &fat,
+        &root().join("kernel/assets/fonts/LICENSE-spleen"),
+        "::/boot/horus/licenses/spleen.txt",
+    )?;
 
     println!("xtask: built {}", image.display());
     Ok(image)
