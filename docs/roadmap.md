@@ -16,16 +16,16 @@ A milestone is **done** when:
 
 Proves the toolchain, the boot path, and the feedback loop.
 
-- [ ] Cargo workspace, `rust-toolchain.toml`, `cargo xtask` skeleton
-- [ ] Kernel builds for `x86_64-unknown-none`, linked higher-half
+- [x] Cargo workspace, `rust-toolchain.toml`, `cargo xtask` skeleton
+- [x] Kernel builds for `x86_64-unknown-none`, linked higher-half
 - [ ] Limine boot protocol: framebuffer, memory map, HHDM, RSDP, SMP info, modules
-- [ ] Bootable USB image built by `cargo xtask image` (GPT + FAT32 ESP + Limine)
+- [x] Bootable USB image built by `cargo xtask image` (GPT + FAT32 ESP + Limine)
 - [ ] Framebuffer console with a bitmap font; Horus logo on boot
 - [ ] Prints memory map, CPU model, and core types (P/E via `CPUID.1Ah`)
 - [ ] PS/2 keyboard input echoed to the screen (polled is fine)
 - [ ] Logging to QEMU `debugcon` / serial and to the framebuffer
 - [ ] Panic screen with message and source location
-- [ ] GitHub Actions: build, `clippy`, `fmt`, and a headless QEMU boot test that greps the log
+- [x] GitHub Actions: build, `clippy`, `fmt`, and a headless QEMU boot test that greps the log
 
 ## v0.2: Kernel core
 
