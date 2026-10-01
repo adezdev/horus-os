@@ -160,7 +160,9 @@ IRQs, timers, process exit) with one syscall.
 
 - A kernel panic stops all other CPUs (NMI IPI), then draws a panic
   screen: message, location, CPU, registers, and a **symbolized
-  backtrace** (the kernel embeds a compact symbol table).
+  backtrace** (the kernel embeds a compact symbol table). Today (v0.1)
+  the screen shows the message, location, and kernel version; CPU,
+  registers, and the backtrace arrive with SMP and exceptions in v0.2.
 - The same report goes to the debug log and, from v0.4, to a
   persistent crash log on the USB ESP (see
   [debugging.md](../development/debugging.md)).
