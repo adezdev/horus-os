@@ -14,9 +14,12 @@ mod log;
 
 mod arch;
 mod boot;
+mod console;
+mod font;
 mod framebuffer;
 mod panic;
 mod stage;
+mod sync;
 
 use stage::Stage;
 
@@ -29,6 +32,9 @@ extern "C" fn kmain() -> ! {
         arch::halt_forever();
     }
     stage::enter(Stage::Entry);
+    if console::init() {
+        stage::redraw();
+    }
     kprintln!("horus: kernel {} starting", env!("CARGO_PKG_VERSION"));
 
     boot::log_boot_info();
