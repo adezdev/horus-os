@@ -154,12 +154,15 @@ must also be tested on the laptop.
    failed or malformed `lsblk` output also stops the command.
 4. Checks that the existing image is nonempty, sector aligned, and fits
    the device. The current GPT image requires 512-byte logical sectors.
-5. Shows model, size in bytes, and current partitions, then requires
+5. Opens the disk exclusively before displaying the confirmation prompt
+   and holds that same handle through the write and flush. Unplugging
+   and replacing the stick cannot redirect writes to the replacement.
+6. Shows model, size in bytes, and current partitions, then requires
    typing the full resolved device name (for example `/dev/sdb`). A
    mismatch or EOF cancels before any write.
-6. Opens the disk exclusively, checks its identity, and repeats the
+7. Checks the opened disk's identity and repeats the
    device checks after confirmation. Changed details cancel the write.
-7. Copies the image without truncating the disk and flushes it before
+8. Copies the image without truncating the disk and flushes it before
    reporting success. All existing data on the target is disposable;
    an interrupted or failed write requires flashing it again.
 

@@ -58,22 +58,23 @@ pub fn run(args: &[String]) -> Result {
     let devices = inspect(&device)?;
     validate_devices(&devices, &device, image_size)?;
 
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    confirm(&devices, image_size, &mut stdin.lock(), &mut stdout.lock())?;
-
     // O_EXCL rejects a device in use (including mounts in other namespaces)
-    // and holds the claim through sync_all. Do not create or truncate a path.
-    let mut output = OpenOptions::new()
-        .write(true)
-        .custom_flags(O_EXCL | O_NOFOLLOW)
-        .open(&device)
-        .map_err(|err| Error(format!("cannot exclusively open {}: {err}; device must be unused and you need write permission (see setup.md)", device.display())))?;
+    // and holds the claim through sync_all. Claim BEFORE showing the details:
+    // an unplugged device's open handle cannot redirect I/O to a replacement
+    // that reuses its name, model, size, or even major/minor device numbers.
+    let mut output = claim(&device)?;
     let opened = output.metadata()?;
     validate_target(&device, opened.file_type().is_block_device())?;
     if opened.rdev() != metadata.rdev() || fs::canonicalize(requested)? != device {
         bail!("device changed after confirmation; refusing to write");
     }
+    let devices = inspect(&device)?;
+    validate_devices(&devices, &device, image_size)?;
+
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    confirm(&devices, image_size, &mut stdin.lock(), &mut stdout.lock())?;
+
     // Repeat the full lsblk policy after the prompt and exclusive open.
     let current = inspect(&device)?;
     validate_snapshot(&devices, &current, &device, image_size)?;
@@ -90,6 +91,15 @@ pub fn run(args: &[String]) -> Result {
         device.display()
     );
     Ok(())
+}
+
+fn claim(path: &Path) -> Result<File> {
+    // Open an existing path without creating, truncating, or following links.
+    OpenOptions::new()
+        .write(true)
+        .custom_flags(O_EXCL | O_NOFOLLOW)
+        .open(path)
+        .map_err(|err| Error(format!("cannot exclusively open {}: {err}; device must be unused and you need write permission (see setup.md)", path.display())))
 }
 
 fn device_argument(args: &[String]) -> Result<&Path> {
@@ -535,6 +545,56 @@ mod tests {
             validate_snapshot(&original, &changed, path, 512),
             "transport",
         );
+    }
+
+    #[test]
+    fn held_output_does_not_follow_replacement_during_confirmation() {
+        use std::os::unix::fs::symlink;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            target_dir().join(format!("flash-replacement-{}-{unique}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("disk");
+        let original = directory.join("original");
+        fs::write(&path, [0u8; 512]).unwrap();
+        let mut held = claim(&path).unwrap();
+
+        struct ReplacingPrompt<'a> {
+            path: &'a Path,
+            original: &'a Path,
+        }
+        impl Write for ReplacingPrompt<'_> {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                fs::rename(self.path, self.original)?;
+                fs::write(self.path, [0u8; 512])
+            }
+        }
+        let mut prompt = ReplacingPrompt {
+            path: &path,
+            original: &original,
+        };
+        confirm(&devices(), 512, &mut Cursor::new("/dev/sdb\n"), &mut prompt).unwrap();
+        // Identical lsblk details and a reused name must not redirect writes.
+        validate_snapshot(&devices(), &devices(), Path::new("/dev/sdb"), 512).unwrap();
+        copy_image(&mut Cursor::new([0x5au8; 512]), &mut held, 512).unwrap();
+        held.sync_all().unwrap();
+        assert_eq!(fs::read(&original).unwrap(), [0x5a; 512]);
+        assert_eq!(fs::read(&path).unwrap(), [0; 512]);
+
+        let alias = directory.join("alias");
+        symlink(&path, &alias).unwrap();
+        assert!(claim(&alias).is_err());
+        assert!(claim(&directory.join("missing")).is_err());
+        drop(held);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
