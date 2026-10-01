@@ -157,14 +157,22 @@ must also be tested on the laptop.
 5. Opens the disk exclusively before displaying the confirmation prompt
    and holds that same handle through the write and flush. Unplugging
    and replacing the stick cannot redirect writes to the replacement.
+   Before prompting, prepares and verifies a private sparse copy of
+   the image for the disk's full size. `sgdisk` relocates the backup GPT
+   in that regular file; it never receives a real block device path.
 6. Shows model, size in bytes, and current partitions, then requires
    typing the full resolved device name (for example `/dev/sdb`). A
    mismatch or EOF cancels before any write.
 7. Checks the opened disk's identity and repeats the
    device checks after confirmation. Changed details cancel the write.
-8. Copies the image without truncating the disk and flushes it before
+8. Copies the image and writes its relocated backup GPT at the disk's
+   actual end, through the same held handle, then flushes before
    reporting success. All existing data on the target is disposable;
    an interrupted or failed write requires flashing it again.
+
+The temporary sparse image is removed when the command returns. Only
+the image and backup GPT regions are written; the unused middle of a
+larger disk is not erased. Flashing is not a secure wipe.
 
 Build the image first with `cargo xtask image`. `flash` accepts exactly
 one device argument and no options or confirmation bypass. It requires

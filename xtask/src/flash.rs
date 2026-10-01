@@ -2,6 +2,8 @@
 
 //! Linux USB flashing. Tests exercise policy and copying without block devices.
 
+mod gpt;
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, Read, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
@@ -66,10 +68,14 @@ pub fn run(args: &[String]) -> Result {
     let opened = output.metadata()?;
     validate_target(&device, opened.file_type().is_block_device())?;
     if opened.rdev() != metadata.rdev() || fs::canonicalize(requested)? != device {
-        bail!("device changed after confirmation; refusing to write");
+        bail!("device changed before confirmation; refusing to write");
     }
     let devices = inspect(&device)?;
     validate_devices(&devices, &device, image_size)?;
+
+    // Prepare and verify target-sized GPT in a regular file before any disk
+    // writes. This tool never passes the device path to sgdisk.
+    let mut prepared = gpt::PreparedImage::new(&mut image, image_size, devices[0].size)?;
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -80,7 +86,7 @@ pub fn run(args: &[String]) -> Result {
     validate_snapshot(&devices, &current, &device, image_size)?;
 
     println!("xtask: writing {image_size} bytes to {}", device.display());
-    copy_image(&mut image, &mut output, image_size)?;
+    prepared.write_to(&mut output)?;
     output.sync_all().map_err(|err| {
         Error(format!(
             "failed to flush device: {err}; flash again before booting"
@@ -239,7 +245,7 @@ fn validate_devices(devices: &[Device], path: &Path, image_size: u64) -> Result 
     if devices.iter().skip(1).any(|device| device.kind != "part") {
         bail!("{} has active device holders; refusing", path.display());
     }
-    if disk.sector_size != 512 {
+    if disk.sector_size != 512 || !disk.size.is_multiple_of(512) {
         bail!("the image requires 512-byte logical sectors");
     }
     if image_size == 0 || !image_size.is_multiple_of(512) || image_size > disk.size {
