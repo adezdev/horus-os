@@ -46,8 +46,11 @@ const CONSOLE_TEXT_TOP: usize = 14;
 const CONSOLE_MARGIN: usize = 8;
 const GLYPH_HEIGHT: usize = 16;
 
-/// The laptop's internal panel (`docs/hardware.md`).
-const LAPTOP_RESOLUTION: (usize, usize) = (1366, 768);
+/// The laptop panel is 1366×768, but QEMU's standard VGA only displays
+/// widths that are a multiple of 8. Asked for 1366, it shows 1360 while the
+/// firmware still reports 1366, so every row is drawn at the wrong offset
+/// and text shears diagonally. 1360 is the closest width it can show.
+const LAPTOP_RESOLUTION: (usize, usize) = (1360, 768);
 /// Small enough that the boot log is longer than the screen, so the boot
 /// test exercises console scrolling.
 const SCROLL_TEST_RESOLUTION: (usize, usize) = (1024, 600);
@@ -78,6 +81,9 @@ fn qemu_command(
     options: &Options,
     (width, height): (usize, usize),
 ) -> Result<Command> {
+    if width % 8 != 0 {
+        bail!("QEMU's VGA needs a width that is a multiple of 8, not {width}");
+    }
     let code = find_firmware("OVMF_CODE", OVMF_CODE_PATHS)?;
     // The firmware writes to its variable store (boot entries, display
     // settings), so every run starts from a fresh copy of the template.
