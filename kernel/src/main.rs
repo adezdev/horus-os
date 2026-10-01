@@ -42,6 +42,11 @@ extern "C" fn kmain() -> ! {
 
     arch::cpu::log_cpu_info();
 
+    if cfg!(feature = "console-test") {
+        for line in 0..100 {
+            kprintln!("console test line {line:03}");
+        }
+    }
     if cfg!(feature = "panic-test") {
         panic!("panic test requested by `cargo xtask test`");
     }

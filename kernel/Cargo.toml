@@ -19,3 +19,6 @@ limine = "0.6.5"
 # Panic right before boot completes, to test the panic screen
 # (`cargo xtask test`). Never enable in a real build.
 panic-test = []
+# Print 100 numbered lines before boot completes, so tests can check
+# console scrolling against known text. Never enable in a real build.
+console-test = []
