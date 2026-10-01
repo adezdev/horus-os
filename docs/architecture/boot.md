@@ -95,8 +95,9 @@ is invisible. Rules:
 
 - The first kernel instructions fill the framebuffer with a solid color,
   and each later init stage changes it. A hang then shows *where* it
-  stopped, even before text rendering works. Current stages
-  (`kernel/src/stage.rs`):
+  stopped, even before text rendering works. Once the text console
+  starts, the stage color moves to a 6-pixel stripe at the top of the
+  screen, above the log. Current stages (`kernel/src/stage.rs`):
 
   | Color      | Stage                                             |
   | ---------- | ------------------------------------------------- |
@@ -104,12 +105,15 @@ is invisible. Rules:
   | Dark blue  | Kernel entry point reached                        |
   | Teal       | Boot information from Limine read                 |
   | Gold       | Early boot complete                               |
-  | Red        | Kernel panic                                      |
+  | Red        | Kernel panic (the whole screen, with the message) |
 
   If the screen keeps showing Limine's menu or goes black without
   turning dark blue, the kernel never started.
-- Exceptions during early init print straight to the framebuffer with
-  a minimal renderer that does not allocate.
+- The kernel log appears on screen as soon as the framebuffer console
+  starts, right after the entry point. The console and the panic screen
+  draw with a compiled-in bitmap font and never allocate.
+- A panic draws its own screen without the console, so it still works
+  if the console itself panicked.
 
 ## Future: installing to NVMe
 

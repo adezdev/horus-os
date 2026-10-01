@@ -60,7 +60,9 @@ including planned ones, is in `docs/development/setup.md`.
 8. **New dependencies** must be justified in the PR (purpose, license,
    `no_std` support) and use an allowed license: MIT, Apache-2.0,
    BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, 0BSD, CC0-1.0. Ask before
-   MPL-2.0. Never GPL, LGPL, AGPL, SSPL, or unlicensed code.
+   MPL-2.0. Never GPL, LGPL, AGPL, SSPL, or unlicensed code. Vendored
+   files (fonts, data) follow the same list and keep their license file
+   and a README with source and hash next to them.
 9. **Every source file starts with**
    `// SPDX-License-Identifier: MIT OR Apache-2.0`.
 

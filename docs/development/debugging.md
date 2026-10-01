@@ -113,9 +113,13 @@ to the stick now, force a crash dump.
 
 ## 6. Tests, fuzzing, and Linux as an oracle
 
-- **Kernel test harness** (`cargo xtask test`): `#[test_case]` functions
-  run in QEMU and report through `debugcon`; QEMU exits with the result
-  code via `isa-debug-exit`.
+- **Boot tests** (`cargo xtask test`, today): boot headless, check the
+  kernel log, and take a QEMU screenshot over QMP to check what the
+  screen shows (stage stripe, scrolled console, panic screen). The
+  screenshots stay in `target/test-*.ppm` for a look when a test fails.
+- **Kernel test harness** (v0.2): `#[test_case]` functions run in QEMU
+  and report through `debugcon`; QEMU exits with the result code via
+  `isa-debug-exit`.
 - **Host-side unit tests** for pure logic (allocators, FS format,
   parsers, scheduler policy) run with plain `cargo test`, which is much
   faster than QEMU.

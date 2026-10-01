@@ -64,6 +64,12 @@ must be compatible with both. Checked in CI with `cargo deny`.
 | MPL-2.0                                         | Ask the owner first (file-level copyleft) |
 | GPL, LGPL, AGPL (any version), SSPL, no license | Not allowed                 |
 
+**Vendored files** (fonts, data tables, images) follow the same list.
+Each keeps its license file and a README stating its source, version,
+and SHA-256 next to it, and `xtask image` copies notices that the
+license requires onto the boot partition (`/boot/horus/licenses/`).
+Example: `kernel/assets/fonts/` (Spleen, BSD-2-Clause).
+
 Separate programs ported to run *on* Horus (a browser, a POSIX shell)
 keep their own licenses and are not linked into Horus components.
 
