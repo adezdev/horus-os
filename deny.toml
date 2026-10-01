@@ -1,0 +1,29 @@
+# cargo-deny policy. See docs/development/workflow.md#dependency-licenses.
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+# The allow list is policy; not every license is in use yet.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Workspace crates are covered by the repository license.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

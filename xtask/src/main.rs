@@ -21,6 +21,7 @@ commands:
   image    build target/horus.img (GPT + FAT32 ESP + Limine + kernel)
   run      boot the image in QEMU
   test     boot the image in headless QEMU and check the kernel log
+  ci       fmt, clippy, license check, and test
 
 options:
   --release   optimized kernel build (build, image, run, test)
@@ -86,6 +87,7 @@ fn main() -> ExitCode {
         Some("image") => image::build(&options).map(drop),
         Some("run") => qemu::run(&options),
         Some("test") => qemu::test(&options),
+        Some("ci") => ci(),
         Some("help" | "--help" | "-h") => {
             println!("{USAGE}");
             Ok(())
@@ -157,4 +159,29 @@ pub fn build_kernel(options: &Options) -> Result<PathBuf> {
         .join(KERNEL_TARGET)
         .join(profile)
         .join("horus-kernel"))
+}
+
+/// Everything CI checks. Run before every commit.
+fn ci() -> Result {
+    run_command(cargo().args(["fmt", "--all", "--check"]))?;
+    run_command(cargo().args(["clippy", "--package", "xtask", "--", "-D", "warnings"]))?;
+    run_command(cargo().args([
+        "clippy",
+        "--package",
+        "horus-kernel",
+        "--target",
+        KERNEL_TARGET,
+        "--",
+        "-D",
+        "warnings",
+    ]))?;
+    run_command(cargo().args([
+        "deny",
+        "--workspace",
+        "check",
+        "licenses",
+        "bans",
+        "sources",
+    ]))?;
+    qemu::test(&Options::default())
 }
