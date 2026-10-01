@@ -51,11 +51,11 @@ fn kvm_available() -> bool {
 /// The QEMU command for `image`, without the debug console setting.
 fn qemu_command(image: &Path, options: &Options) -> Result<Command> {
     let code = find_firmware("OVMF_CODE", OVMF_CODE_PATHS)?;
-    // The variable store is writable, so each run uses a private copy.
+    // The firmware writes to its variable store (boot entries, display
+    // settings), so every run starts from a fresh copy of the template.
+    // Otherwise one run's state could change how the next one boots.
     let vars = target_dir().join("OVMF_VARS.fd");
-    if !vars.exists() {
-        fs::copy(find_firmware("OVMF_VARS", OVMF_VARS_PATHS)?, &vars)?;
-    }
+    fs::copy(find_firmware("OVMF_VARS", OVMF_VARS_PATHS)?, &vars)?;
 
     let mut cmd = Command::new("qemu-system-x86_64");
     cmd.args(["-machine", "q35", "-smp", "8", "-m", "4G", "-no-reboot"]);
