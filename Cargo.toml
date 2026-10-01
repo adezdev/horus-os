@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["kernel"]
+members = ["kernel", "xtask"]
+# Plain `cargo build` builds only host tools; the kernel is built for its own
+# target through `cargo xtask build`.
+default-members = ["xtask"]
 
 [workspace.package]
 version = "0.1.0"
