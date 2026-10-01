@@ -10,7 +10,7 @@ targeting one machine first: the owner's HP Laptop 15-fd0xxx
 (i3-1315U, 8 GB, Intel UHD, NVMe, RTL8852BT Wi-Fi). Long-term goal:
 a fast daily-driver OS with a modern tiling + floating desktop.
 
-**Status: pre-code.** The design lives in [`docs/`](docs/README.md).
+**Status: v0.1 in progress** (boots in QEMU). The design lives in [`docs/`](docs/README.md).
 Read the relevant docs and ADRs before changing anything they describe.
 
 | Topic                       | Read                                   |
@@ -25,17 +25,18 @@ Read the relevant docs and ADRs before changing anything they describe.
 
 ## Commands
 
-Planned (they don't exist until the workspace is created in v0.1):
-
 ```sh
-cargo xtask build        # kernel + userspace
-cargo xtask run          # boot in QEMU (KVM, OVMF, USB storage)
+cargo xtask build        # build the kernel
+cargo xtask image        # target/horus.img: GPT + FAT32 ESP + Limine + kernel
+cargo xtask run          # boot in QEMU (KVM, OVMF, USB storage), log on stdout
 cargo xtask run --gdb    # paused, GDB stub on :1234
-cargo xtask test         # kernel tests in headless QEMU
-cargo xtask ci           # fmt, clippy -D warnings, build, test, cargo deny
+cargo xtask test         # headless boot; passes on "horus: boot complete"
+cargo xtask ci           # fmt, clippy -D warnings, cargo deny, boot test
 ```
 
-Run `cargo xtask ci` before every commit once it exists.
+Run `cargo xtask ci` before every commit. Never run plain `cargo build`
+for the kernel; `xtask` passes the right target. The full command list,
+including planned ones, is in `docs/development/setup.md`.
 
 ## Hard rules
 

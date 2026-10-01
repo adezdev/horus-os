@@ -36,15 +36,21 @@ GPT
 
 ### `limine.conf`
 
+The source of truth is [`boot/limine.conf`](../../boot/limine.conf).
+It currently loads only the kernel:
+
 ```
 timeout: 3
 
 /Horus
     protocol: limine
     path: boot():/boot/horus/kernel
-    module_path: boot():/boot/horus/initrd
-    kaslr: yes
 ```
+
+Planned additions: `module_path: boot():/boot/horus/initrd` once
+userspace exists (v0.3), and KASLR once the kernel is linked
+position-independent (v0.2). For now it is linked at the fixed address
+`0xffffffff80000000` (see `kernel/linker.ld`).
 
 ## Limine requests used
 
@@ -89,7 +95,19 @@ is invisible. Rules:
 
 - The first kernel instructions fill the framebuffer with a solid color,
   and each later init stage changes it. A hang then shows *where* it
-  stopped, even before text rendering works.
+  stopped, even before text rendering works. Current stages
+  (`kernel/src/stage.rs`):
+
+  | Color      | Stage                                             |
+  | ---------- | ------------------------------------------------- |
+  | Purple     | Limine doesn't support the requested base revision |
+  | Dark blue  | Kernel entry point reached                        |
+  | Teal       | Boot information from Limine read                 |
+  | Gold       | Early boot complete                               |
+  | Red        | Kernel panic                                      |
+
+  If the screen keeps showing Limine's menu or goes black without
+  turning dark blue, the kernel never started.
 - Exceptions during early init print straight to the framebuffer with
   a minimal renderer that does not allocate.
 
