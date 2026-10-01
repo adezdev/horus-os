@@ -1,0 +1,16 @@
+[package]
+name = "horus-kernel"
+description = "The Horus kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "horus-kernel"
+test = false
+bench = false
+
+[dependencies]
+limine = "0.6.5"

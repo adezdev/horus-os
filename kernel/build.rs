@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+fn main() {
+    let dir = std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
+    println!("cargo:rustc-link-arg-bins=-T{dir}/linker.ld");
+    println!("cargo:rerun-if-changed=linker.ld");
+}

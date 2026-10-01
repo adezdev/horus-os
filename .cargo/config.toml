@@ -1,0 +1,8 @@
+[alias]
+xtask = "run --package xtask --"
+
+[target.x86_64-unknown-none]
+# Link at a fixed higher-half address (see kernel/linker.ld). KASLR needs a
+# position-independent kernel and comes with the v0.2 memory work.
+# Frame pointers keep panic backtraces possible.
+rustflags = ["-C", "relocation-model=static", "-C", "force-frame-pointers=yes"]
