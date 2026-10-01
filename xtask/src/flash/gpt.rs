@@ -5,42 +5,60 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::copy_image;
-use crate::{Error, Result, bail, target_dir};
+use crate::{Error, Result, bail};
 
 const SECTOR: u64 = 512;
 static NEXT_IMAGE: AtomicU64 = AtomicU64::new(0);
 
 struct TempImage {
+    directory: PathBuf,
     path: PathBuf,
     file: File,
 }
 
 impl TempImage {
     fn new() -> Result<Self> {
-        let path = target_dir().join(format!(
-            "horus-flash-{}-{}.img",
+        // /tmp's sticky directory and a new mode-0700 directory prevent an
+        // unprivileged process from replacing an elevated tool's pathname.
+        // Do not use target/ or TMPDIR, which the invoking user can control.
+        let directory = Path::new("/tmp").join(format!(
+            "horus-flash-{}-{}",
             std::process::id(),
             NEXT_IMAGE.fetch_add(1, Ordering::Relaxed)
         ));
-        let file = OpenOptions::new()
+        fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        let path = directory.join("image.img");
+        let file = match OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(&path)?;
-        Ok(Self { path, file })
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(err) => {
+                let _ = fs::remove_dir(&directory);
+                return Err(err.into());
+            }
+        };
+        Ok(Self {
+            directory,
+            path,
+            file,
+        })
     }
 }
 
 impl Drop for TempImage {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_dir(&self.directory);
     }
 }
 
@@ -172,6 +190,27 @@ mod tests {
     use std::process::Stdio;
 
     const IMAGE_SIZE: u64 = 8 * 1024 * 1024;
+
+    #[test]
+    fn staging_directory_and_file_are_private_and_removed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let image = TempImage::new().unwrap();
+        let directory = image.directory.clone();
+        let path = image.path.clone();
+        assert_eq!(directory.parent(), Some(Path::new("/tmp")));
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            image.file.metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(image);
+        assert!(!path.exists());
+        assert!(!directory.exists());
+    }
 
     fn source() -> TempImage {
         let mut image = TempImage::new().unwrap();

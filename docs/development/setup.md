@@ -160,6 +160,9 @@ must also be tested on the laptop.
    Before prompting, prepares and verifies a private sparse copy of
    the image for the disk's full size. `sgdisk` relocates the backup GPT
    in that regular file; it never receives a real block device path.
+   Staging uses a new directory with mode `0700` under `/tmp`, owned by
+   the process user, so an unprivileged process cannot replace a root
+   invocation's staging path through the writable repository directory.
 6. Shows model, size in bytes, and current partitions, then requires
    typing the full resolved device name (for example `/dev/sdb`). A
    mismatch or EOF cancels before any write.
