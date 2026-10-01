@@ -13,6 +13,7 @@ use std::process::{self, Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use std::{env, thread};
 
+use crate::font::{self, Font, UNREADABLE};
 use crate::{Error, Options, Result, bail, image, run_command, target_dir};
 
 const OVMF_CODE_PATHS: &[&str] = &[
@@ -26,7 +27,7 @@ const OVMF_VARS_PATHS: &[&str] = &[
 
 /// Printed by the kernel when early boot succeeds.
 const BOOT_OK: &str = "horus: boot complete";
-/// Printed by the kernel's panic handler.
+/// Printed by the kernel's panic handler, followed by `at <location>: `.
 const PANIC: &str = "horus: PANIC";
 /// TCG emulation in CI is slow; KVM boots in a few seconds.
 const TEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -41,18 +42,19 @@ const STAGE_PANIC: u32 = 0xc0392b;
 const CONSOLE_BACKGROUND: u32 = 0x0f1115;
 const CONSOLE_TEXT: u32 = 0xe6e6e6;
 const PANIC_TEXT: u32 = 0xffffff;
-// Console layout; keep in sync with `kernel/src/console.rs` and `font.rs`.
+// Layout; keep in sync with `kernel/src/console.rs` and `kernel/src/panic.rs`.
 const CONSOLE_TEXT_TOP: usize = 14;
 const CONSOLE_MARGIN: usize = 8;
-const GLYPH_HEIGHT: usize = 16;
+const PANIC_MARGIN: usize = 24;
+/// Lines printed by the kernel's `console-test` feature.
+const CONSOLE_TEST_LINES: usize = 100;
 
 /// The laptop panel is 1366×768, but QEMU's standard VGA only displays
 /// widths that are a multiple of 8. Asked for 1366, it shows 1360 while the
 /// firmware still reports 1366, so every row is drawn at the wrong offset
 /// and text shears diagonally. 1360 is the closest width it can show.
 const LAPTOP_RESOLUTION: (usize, usize) = (1360, 768);
-/// Small enough that the boot log is longer than the screen, so the boot
-/// test exercises console scrolling.
+/// Smaller than the laptop, to test a second resolution.
 const SCROLL_TEST_RESOLUTION: (usize, usize) = (1024, 600);
 
 fn find_firmware(var: &str, candidates: &[&str]) -> Result<PathBuf> {
@@ -148,77 +150,112 @@ pub fn run(options: &Options) -> Result {
 /// What a test boot should end in.
 #[derive(Clone, Copy)]
 enum Scenario {
-    /// Normal boot: the log ends with [`BOOT_OK`] under a gold stage stripe.
+    /// The normal kernel: the console's last line is [`BOOT_OK`] under a
+    /// gold stage stripe.
     Boot,
-    /// Kernel built with `panic-test`: the red panic screen shows.
+    /// Kernel with `console-test`: 100 numbered lines scroll through the
+    /// console, and every visible row shows the expected line.
+    Scroll,
+    /// Kernel with `panic-test`: the red panic screen shows the message and
+    /// location from the debug log.
     Panic,
 }
 
 impl Scenario {
+    const ALL: [Scenario; 3] = [Scenario::Boot, Scenario::Scroll, Scenario::Panic];
+
     fn name(self) -> &'static str {
         match self {
             Scenario::Boot => "boot",
+            Scenario::Scroll => "scroll",
             Scenario::Panic => "panic",
+        }
+    }
+
+    fn kernel_features(self) -> &'static [&'static str] {
+        match self {
+            Scenario::Boot => &[],
+            Scenario::Scroll => &["console-test"],
+            Scenario::Panic => &["panic-test"],
         }
     }
 
     fn resolution(self) -> (usize, usize) {
         match self {
-            Scenario::Boot => SCROLL_TEST_RESOLUTION,
-            Scenario::Panic => LAPTOP_RESOLUTION,
+            Scenario::Boot | Scenario::Panic => LAPTOP_RESOLUTION,
+            Scenario::Scroll => SCROLL_TEST_RESOLUTION,
         }
     }
 
     /// The log line that ends this scenario, and the one that fails it.
     fn markers(self) -> (&'static str, &'static str) {
         match self {
-            Scenario::Boot => (BOOT_OK, PANIC),
+            Scenario::Boot | Scenario::Scroll => (BOOT_OK, PANIC),
             Scenario::Panic => (PANIC, BOOT_OK),
         }
     }
 
     /// Checks a screenshot taken after the expected log line appeared.
-    fn check_screen(self, screen: &Screen) -> std::result::Result<(), String> {
+    fn check_screen(self, screen: &Screen, font: &Font, log: &str) -> CheckResult {
         let (w, h) = (screen.width, screen.height);
         match self {
             Scenario::Boot => {
                 expect_pixel(screen, w / 2, 2, STAGE_READY, "stage stripe")?;
-                expect_pixel(
-                    screen,
-                    w - 2,
-                    h - 2,
-                    CONSOLE_BACKGROUND,
-                    "console background",
-                )?;
-                // The log is longer than the screen, so after the final
-                // newline scrolls, the last line sits second from the bottom
-                // and the bottom row is empty. Without a working scroll and
-                // redraw, the bottom row would still hold text.
-                let rows = (h - CONSOLE_TEXT_TOP - CONSOLE_MARGIN) / GLYPH_HEIGHT;
-                let row_top = |row: usize| CONSOLE_TEXT_TOP + row * GLYPH_HEIGHT;
-                if screen.count_rows(CONSOLE_TEXT, row_top(rows - 2), GLYPH_HEIGHT) == 0 {
-                    return Err("console: last log line is not second from the bottom".into());
+                let lines = console_lines(screen, font)?;
+                expect_last_line(&lines, BOOT_OK)
+            }
+            Scenario::Scroll => {
+                expect_pixel(screen, w / 2, 2, STAGE_READY, "stage stripe")?;
+                let lines = console_lines(screen, font)?;
+                // The final newline scrolls once more, so the last line sits
+                // second from the bottom and the bottom row is empty.
+                let rows = lines.len();
+                if !lines[rows - 1].is_empty() {
+                    return Err(format!("bottom row should be empty: {:?}", lines[rows - 1]));
                 }
-                if screen.count_rows(CONSOLE_TEXT, row_top(rows - 1), GLYPH_HEIGHT) != 0 {
-                    return Err("console: bottom row is not empty after scrolling".into());
+                expect_line(&lines, rows - 2, BOOT_OK)?;
+                for (k, row) in (0..rows - 2).rev().enumerate() {
+                    let n = CONSOLE_TEST_LINES - 1 - k;
+                    expect_line(&lines, row, &format!("console test line {n:03}"))?;
                 }
                 Ok(())
             }
             Scenario::Panic => {
                 expect_pixel(screen, w - 2, h - 2, STAGE_PANIC, "panic background")?;
-                expect_some(screen, PANIC_TEXT, "panic text")
+                let (location, message) = panic_from_log(log)?;
+                let expected = [
+                    "HORUS KERNEL PANIC".to_string(),
+                    String::new(),
+                    message,
+                    String::new(),
+                    format!("at {location}"),
+                    String::new(),
+                    format!("kernel {}", env!("CARGO_PKG_VERSION")),
+                    String::new(),
+                    "The system has stopped. Take a photo of this screen, then reboot.".into(),
+                ];
+                let cols = (w - 2 * PANIC_MARGIN) / font::WIDTH;
+                for (i, want) in expected.iter().enumerate() {
+                    let y = PANIC_MARGIN + i * font::HEIGHT;
+                    let got = font.read(
+                        |x, y| screen.pixel(x, y),
+                        (PANIC_MARGIN, y),
+                        cols,
+                        (PANIC_TEXT, STAGE_PANIC),
+                    );
+                    if &got != want {
+                        return Err(format!("panic screen line {i}: {got:?}, expected {want:?}"));
+                    }
+                }
+                Ok(())
             }
         }
     }
 }
 
-fn expect_pixel(
-    screen: &Screen,
-    x: usize,
-    y: usize,
-    want: u32,
-    what: &str,
-) -> std::result::Result<(), String> {
+type CheckResult = std::result::Result<(), String>;
+
+fn expect_pixel(screen: &Screen, x: usize, y: usize, want: u32, what: &str) -> CheckResult {
     match screen.pixel(x, y) {
         got if got == want => Ok(()),
         got => Err(format!(
@@ -227,39 +264,78 @@ fn expect_pixel(
     }
 }
 
-fn expect_some(screen: &Screen, color: u32, what: &str) -> std::result::Result<(), String> {
-    if screen.count(color) > 0 {
-        Ok(())
-    } else {
-        Err(format!("{what}: no pixels of color {color:#08x}"))
+/// Reads every console row. Fails if any row has pixels that aren't
+/// console text, e.g. because rows are drawn at the wrong offset.
+fn console_lines(screen: &Screen, font: &Font) -> std::result::Result<Vec<String>, String> {
+    let rows = (screen.height - CONSOLE_TEXT_TOP - CONSOLE_MARGIN) / font::HEIGHT;
+    let cols = (screen.width - 2 * CONSOLE_MARGIN) / font::WIDTH;
+    let lines: Vec<String> = (0..rows)
+        .map(|row| {
+            font.read(
+                |x, y| screen.pixel(x, y),
+                (CONSOLE_MARGIN, CONSOLE_TEXT_TOP + row * font::HEIGHT),
+                cols,
+                (CONSOLE_TEXT, CONSOLE_BACKGROUND),
+            )
+        })
+        .collect();
+    match lines.iter().position(|line| line.contains(UNREADABLE)) {
+        Some(row) => Err(format!("console row {row} is unreadable: {:?}", lines[row])),
+        None => Ok(lines),
     }
 }
 
-/// `cargo xtask test`: boot headless, once normally and once with a forced
-/// panic, checking the kernel log and a screenshot each time.
+fn expect_line(lines: &[String], row: usize, want: &str) -> CheckResult {
+    match &lines[row] {
+        got if got == want => Ok(()),
+        got => Err(format!("console row {row}: {got:?}, expected {want:?}")),
+    }
+}
+
+/// Checks that the last non-empty console row reads `want`.
+fn expect_last_line(lines: &[String], want: &str) -> CheckResult {
+    match lines.iter().rposition(|line| !line.is_empty()) {
+        Some(row) => expect_line(lines, row, want),
+        None => Err("console is empty".into()),
+    }
+}
+
+/// The location and message of the panic in the debug log.
+fn panic_from_log(log: &str) -> std::result::Result<(String, String), String> {
+    let prefix = format!("{PANIC} at ");
+    log.lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .and_then(|rest| rest.split_once(": "))
+        .map(|(location, message)| (location.to_string(), message.trim_end().to_string()))
+        .ok_or_else(|| "no panic location in the debug log".into())
+}
+
+/// `cargo xtask test`: boot headless in each [`Scenario`], checking the
+/// kernel log and the text on screen each time.
 pub fn test(options: &Options) -> Result {
+    let font = Font::load()?;
     let start = Instant::now();
-    for scenario in [Scenario::Boot, Scenario::Panic] {
-        test_scenario(options, scenario)?;
+    for scenario in Scenario::ALL {
+        test_scenario(options, scenario, &font)?;
     }
     println!("xtask: all boot tests passed in {:.1?}", start.elapsed());
     Ok(())
 }
 
-fn test_scenario(options: &Options, scenario: Scenario) -> Result {
+fn test_scenario(options: &Options, scenario: Scenario, font: &Font) -> Result {
     let name = scenario.name();
     let options = Options {
         headless: true,
         gdb: false,
-        panic_test: matches!(scenario, Scenario::Panic),
+        kernel_features: scenario.kernel_features(),
         ..*options
     };
     let image = image::build(&options)?;
     let log = target_dir().join(format!("test-{name}.log"));
     let screenshot = target_dir().join(format!("test-{name}.ppm"));
-    let socket = TempFile(target_dir().join(format!("qmp-{}.sock", process::id())));
     let stderr = target_dir().join(format!("test-{name}.stderr"));
-    for path in [&log, &screenshot, &socket.0, &stderr] {
+    let socket = TempFile(target_dir().join(format!("qmp-{}.sock", process::id())));
+    for path in [&log, &screenshot, &stderr, &socket.0] {
         let _ = fs::remove_file(path);
     }
 
@@ -274,8 +350,12 @@ fn test_scenario(options: &Options, scenario: Scenario) -> Result {
         .spawn()?;
 
     let start = Instant::now();
-    let outcome = wait_for_log(&mut child, &log, scenario, start)
-        .and_then(|()| wait_for_screen(&socket.0, &screenshot, scenario));
+    let outcome = wait_for_log(&mut child, &log, scenario, start).and_then(|()| {
+        let log = fs::read_to_string(&log).unwrap_or_default();
+        wait_for_screen(&socket.0, &screenshot, |screen| {
+            scenario.check_screen(screen, font, &log)
+        })
+    });
     let _ = child.kill();
     let _ = child.wait();
 
@@ -298,12 +378,7 @@ fn test_scenario(options: &Options, scenario: Scenario) -> Result {
 }
 
 /// Waits until the kernel log shows the scenario's expected line.
-fn wait_for_log(
-    child: &mut Child,
-    log: &Path,
-    scenario: Scenario,
-    start: Instant,
-) -> std::result::Result<(), String> {
+fn wait_for_log(child: &mut Child, log: &Path, scenario: Scenario, start: Instant) -> CheckResult {
     let (expected, unexpected) = scenario.markers();
     loop {
         let output = fs::read_to_string(log).unwrap_or_default();
@@ -323,20 +398,20 @@ fn wait_for_log(
     }
 }
 
-/// Takes screenshots until the scenario's screen checks pass. The kernel
-/// logs before it draws, so the screen may lag briefly behind the log.
+/// Takes screenshots until `check` passes. The kernel logs before it draws,
+/// so the screen may lag briefly behind the log.
 fn wait_for_screen(
     socket: &Path,
     screenshot: &Path,
-    scenario: Scenario,
-) -> std::result::Result<(), String> {
+    check: impl Fn(&Screen) -> CheckResult,
+) -> CheckResult {
     let mut qmp = Qmp::connect(socket).map_err(|e| format!("QMP: {e}"))?;
     let start = Instant::now();
     loop {
         qmp.screendump(screenshot)
             .map_err(|e| format!("screendump: {e}"))?;
         let screen = Screen::read_ppm(screenshot).map_err(|e| format!("screenshot: {e}"))?;
-        match scenario.check_screen(&screen) {
+        match check(&screen) {
             Ok(()) => return Ok(()),
             Err(problem) if start.elapsed() > SCREEN_TIMEOUT => return Err(problem),
             Err(_) => thread::sleep(Duration::from_millis(200)),
@@ -444,21 +519,12 @@ impl Screen {
         Ok(Screen { width, height, rgb })
     }
 
+    /// The pixel at `(x, y)` as `0xRRGGBB`; black outside the screen.
     fn pixel(&self, x: usize, y: usize) -> u32 {
+        if x >= self.width || y >= self.height {
+            return 0;
+        }
         let i = (y * self.width + x) * 3;
         u32::from_be_bytes([0, self.rgb[i], self.rgb[i + 1], self.rgb[i + 2]])
-    }
-
-    fn count(&self, color: u32) -> usize {
-        self.count_rows(color, 0, self.height)
-    }
-
-    /// Counts pixels of `color` in `height` pixel rows starting at `top`.
-    fn count_rows(&self, color: u32, top: usize, height: usize) -> usize {
-        let bottom = (top + height).min(self.height);
-        (top.min(bottom)..bottom)
-            .flat_map(|y| (0..self.width).map(move |x| (x, y)))
-            .filter(|&(x, y)| self.pixel(x, y) == color)
-            .count()
     }
 }
