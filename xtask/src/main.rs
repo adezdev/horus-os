@@ -4,6 +4,7 @@
 //!
 //! See `docs/development/setup.md` for the full command list.
 
+mod font;
 mod image;
 mod qemu;
 
@@ -60,14 +61,14 @@ macro_rules! bail {
 pub(crate) use bail;
 
 /// Command-line options shared by the tasks.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Options {
     pub release: bool,
     pub gdb: bool,
     pub no_kvm: bool,
     pub headless: bool,
-    /// Build the kernel with its `panic-test` feature (used by `test`).
-    pub panic_test: bool,
+    /// Kernel cargo features to enable (test-only features, set by `test`).
+    pub kernel_features: &'static [&'static str],
 }
 
 fn main() -> ExitCode {
@@ -155,8 +156,8 @@ pub fn build_kernel(options: &Options) -> Result<PathBuf> {
     if options.release {
         cmd.arg("--release");
     }
-    if options.panic_test {
-        cmd.args(["--features", "panic-test"]);
+    if !options.kernel_features.is_empty() {
+        cmd.arg("--features").arg(options.kernel_features.join(","));
     }
     run_command(&mut cmd)?;
     let profile = if options.release { "release" } else { "debug" };
