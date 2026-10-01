@@ -24,6 +24,12 @@ owner approves it.
 `cargo xtask image` builds `target/horus.img`, which
 `cargo xtask flash` writes to the stick.
 
+Flashing prepares and verifies a temporary sparse image sized for the
+target disk, relocating the backup GPT to its final logical sector.
+It writes the boot image and relocated GPT through an exclusive disk
+handle held across confirmation, then flushes the writes. The original
+`target/horus.img` stays sized for QEMU.
+
 ```
 GPT
 └── Partition 1: EFI System Partition, FAT32, 512 MiB

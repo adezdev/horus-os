@@ -20,6 +20,7 @@ Proves the toolchain, the boot path, and the feedback loop.
 - [x] Kernel builds for `x86_64-unknown-none`, linked higher-half
 - [ ] Limine boot protocol: framebuffer, memory map, HHDM, RSDP, SMP info, modules
 - [x] Bootable USB image built by `cargo xtask image` (GPT + FAT32 ESP + Limine)
+- [x] `cargo xtask flash /dev/sdX` with USB-only safety checks and typed confirmation
 - [x] Framebuffer console with a bitmap font (Spleen 8×16), scrolling
 - [ ] Horus logo on boot
 - [ ] Prints memory map, CPU model, and core types (P/E via `CPUID.1Ah`)
