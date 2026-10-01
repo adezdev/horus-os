@@ -20,7 +20,7 @@ commands:
   build    build the kernel
   image    build target/horus.img (GPT + FAT32 ESP + Limine + kernel)
   run      boot the image in QEMU
-  test     boot the image in headless QEMU and check the kernel log
+  test     boot headless in QEMU; check the kernel log and the screen
   ci       fmt, clippy, license check, and test
 
 options:
@@ -66,6 +66,8 @@ pub struct Options {
     pub gdb: bool,
     pub no_kvm: bool,
     pub headless: bool,
+    /// Build the kernel with its `panic-test` feature (used by `test`).
+    pub panic_test: bool,
 }
 
 fn main() -> ExitCode {
@@ -152,6 +154,9 @@ pub fn build_kernel(options: &Options) -> Result<PathBuf> {
     ]);
     if options.release {
         cmd.arg("--release");
+    }
+    if options.panic_test {
+        cmd.args(["--features", "panic-test"]);
     }
     run_command(&mut cmd)?;
     let profile = if options.release { "release" } else { "debug" };
