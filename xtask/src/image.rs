@@ -5,10 +5,10 @@
 //!
 //! Uses `sgdisk` and mtools, so no root access or loop devices are needed.
 
-use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::{env, process};
 
 use crate::{Options, Result, bail, build_kernel, root, run_command, target_dir};
 
@@ -36,9 +36,26 @@ pub fn build(options: &Options) -> Result<PathBuf> {
         );
     }
 
+    // Build into a temporary file, then rename it into place. A QEMU still
+    // running from the previous image keeps that file, instead of having
+    // it rewritten underneath it.
     let image = target_dir().join("horus.img");
-    // Start from an empty, sparse file every time.
-    File::create(&image)?.set_len(ESP_OFFSET + ESP_SIZE + TAIL)?;
+    let partial = target_dir().join(format!("horus.img.{}.partial", process::id()));
+    let result = write_image(&partial, &kernel, &limine_efi)
+        .and_then(|()| fs::rename(&partial, &image).map_err(Into::into));
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    result?;
+
+    println!("xtask: built {}", image.display());
+    Ok(image)
+}
+
+/// Writes a complete disk image to `image`.
+fn write_image(image: &Path, kernel: &Path, limine_efi: &Path) -> Result {
+    // Start from an empty, sparse file.
+    File::create(image)?.set_len(ESP_OFFSET + ESP_SIZE + TAIL)?;
 
     run_command(
         Command::new("sgdisk")
@@ -52,7 +69,7 @@ pub fn build(options: &Options) -> Result<PathBuf> {
                 "--typecode=1:ef00",
                 "--change-name=1:Horus ESP",
             ])
-            .arg(&image)
+            .arg(image)
             .stdout(std::process::Stdio::null()),
     )?;
 
@@ -79,22 +96,19 @@ pub fn build(options: &Options) -> Result<PathBuf> {
         "::/boot/horus",
         "::/boot/horus/licenses",
     ]))?;
-    copy_in(&fat, &limine_efi, "::/EFI/BOOT/BOOTX64.EFI")?;
+    copy_in(&fat, limine_efi, "::/EFI/BOOT/BOOTX64.EFI")?;
     copy_in(
         &fat,
         &root().join("boot/limine.conf"),
         "::/boot/limine/limine.conf",
     )?;
-    copy_in(&fat, &kernel, "::/boot/horus/kernel")?;
+    copy_in(&fat, kernel, "::/boot/horus/kernel")?;
     // Third-party notices for what's compiled into the kernel.
     copy_in(
         &fat,
         &root().join("kernel/assets/fonts/LICENSE-spleen"),
         "::/boot/horus/licenses/spleen.txt",
-    )?;
-
-    println!("xtask: built {}", image.display());
-    Ok(image)
+    )
 }
 
 fn copy_in(fat: &str, source: &Path, dest: &str) -> Result {

@@ -9,7 +9,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{self, Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use std::{env, thread};
 
@@ -74,22 +74,32 @@ fn kvm_available() -> bool {
         .is_ok()
 }
 
+/// A file that is deleted when dropped.
+struct TempFile(PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 /// The QEMU command for `image`, without the debug console setting. The
-/// UEFI firmware picks `resolution` for the framebuffer.
+/// UEFI firmware picks `resolution` for the framebuffer. Keep the returned
+/// [`TempFile`] (the firmware variable store) alive until QEMU exits.
 fn qemu_command(
     image: &Path,
     options: &Options,
     (width, height): (usize, usize),
-) -> Result<Command> {
+) -> Result<(Command, TempFile)> {
     if width % 8 != 0 {
         bail!("QEMU's VGA needs a width that is a multiple of 8, not {width}");
     }
     let code = find_firmware("OVMF_CODE", OVMF_CODE_PATHS)?;
     // The firmware writes to its variable store (boot entries, display
-    // settings), so every run starts from a fresh copy of the template.
-    // Otherwise one run's state could change how the next one boots.
-    let vars = target_dir().join("OVMF_VARS.fd");
-    fs::copy(find_firmware("OVMF_VARS", OVMF_VARS_PATHS)?, &vars)?;
+    // settings), so every QEMU gets a fresh copy of the template. A copy per
+    // invocation also keeps concurrent runs from sharing one.
+    let vars = TempFile(target_dir().join(format!("ovmf-vars-{}.fd", process::id())));
+    fs::copy(find_firmware("OVMF_VARS", OVMF_VARS_PATHS)?, &vars.0)?;
 
     let mut cmd = Command::new("qemu-system-x86_64");
     cmd.args(["-machine", "q35", "-smp", "8", "-m", "4G", "-no-reboot"]);
@@ -103,7 +113,7 @@ fn qemu_command(
         code.display()
     ));
     cmd.arg("-drive")
-        .arg(format!("if=pflash,format=raw,file={}", vars.display()));
+        .arg(format!("if=pflash,format=raw,file={}", vars.0.display()));
     cmd.arg("-drive").arg(format!(
         "if=none,id=stick,format=raw,file={}",
         image.display()
@@ -122,7 +132,7 @@ fn qemu_command(
     if options.gdb {
         cmd.args(["-s", "-S"]);
     }
-    Ok(cmd)
+    Ok((cmd, vars))
 }
 
 /// `cargo xtask run`: boot interactively, kernel log on stdout.
@@ -131,7 +141,8 @@ pub fn run(options: &Options) -> Result {
     if options.gdb {
         println!("xtask: QEMU is paused; attach with `gdb -ex 'target remote :1234'`");
     }
-    run_command(qemu_command(&image, options, LAPTOP_RESOLUTION)?.args(["-debugcon", "stdio"]))
+    let (mut cmd, _vars) = qemu_command(&image, options, LAPTOP_RESOLUTION)?;
+    run_command(cmd.args(["-debugcon", "stdio"]))
 }
 
 /// What a test boot should end in.
@@ -246,24 +257,25 @@ fn test_scenario(options: &Options, scenario: Scenario) -> Result {
     let image = image::build(&options)?;
     let log = target_dir().join(format!("test-{name}.log"));
     let screenshot = target_dir().join(format!("test-{name}.ppm"));
-    let socket = target_dir().join(format!("test-{name}.qmp"));
+    let socket = TempFile(target_dir().join(format!("qmp-{}.sock", process::id())));
     let stderr = target_dir().join(format!("test-{name}.stderr"));
-    for path in [&log, &screenshot, &socket, &stderr] {
+    for path in [&log, &screenshot, &socket.0, &stderr] {
         let _ = fs::remove_file(path);
     }
 
-    let mut child = qemu_command(&image, &options, scenario.resolution())?
+    let (mut cmd, _vars) = qemu_command(&image, &options, scenario.resolution())?;
+    let mut child = cmd
         .arg("-debugcon")
         .arg(format!("file:{}", log.display()))
         .arg("-qmp")
-        .arg(format!("unix:{},server=on,wait=off", socket.display()))
+        .arg(format!("unix:{},server=on,wait=off", socket.0.display()))
         .stdin(Stdio::null())
         .stderr(File::create(&stderr)?)
         .spawn()?;
 
     let start = Instant::now();
     let outcome = wait_for_log(&mut child, &log, scenario, start)
-        .and_then(|()| wait_for_screen(&socket, &screenshot, scenario));
+        .and_then(|()| wait_for_screen(&socket.0, &screenshot, scenario));
     let _ = child.kill();
     let _ = child.wait();
 
